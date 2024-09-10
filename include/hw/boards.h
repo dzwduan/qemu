@@ -4,6 +4,7 @@
 #define HW_BOARDS_H
 
 #include "exec/memory.h"
+#include "qemu/typedefs.h"
 #include "sysemu/hostmem.h"
 #include "sysemu/blockdev.h"
 #include "qapi/qapi-types-machine.h"

@@ -22,51 +22,45 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "qemu/osdep.h"
-#include "qemu/error-report.h"
-#include "qapi/error.h"
+#include "hw/riscv/nutshell.h"
 #include "hw/boards.h"
-#include "hw/loader.h"
+#include "hw/cpu/cluster.h"
+#include "hw/riscv/riscv_hart.h"
 #include "hw/sysbus.h"
+#include "qapi/error.h"
+#include "qemu/error-report.h"
+#include "qemu/osdep.h"
 #include "qemu/typedefs.h"
 #include "qemu/units.h"
 #include "qom/object.h"
-#include "target/riscv/cpu.h"
-#include "hw/riscv/riscv_hart.h"
-#include "hw/riscv/nutshell.h"
-#include "hw/riscv/boot.h"
-#include "hw/riscv/numa.h"
-#include "hw/intc/riscv_aclint.h"
-#include "chardev/char.h"
-#include "sysemu/device_tree.h"
-#include "sysemu/sysemu.h"
-
-#include "hw/misc/unimp.h"
-#include "hw/char/xilinx_uartlite.h"
-#include "hw/intc/riscv_aclint.h"
-#include "hw/intc/sifive_plic.h"
 #include <libfdt.h>
 #include <unistd.h>
-#include <zstd.h>
 #include <zlib.h>
-
+#include <zstd.h>
+#include <glib.h>
 
 enum {
-    UART0_IRQ = 10,
-    RTC_IRQ = 11,
-    VIRTIO_IRQ = 1, /* 1 to 8 */
-    VIRTIO_COUNT = 8,
-    PCIE_IRQ = 0x20,            /* 32 to 35 */
-    VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
+  UART0_IRQ = 10,
+  RTC_IRQ = 11,
+  VIRTIO_IRQ = 1, /* 1 to 8 */
+  VIRTIO_COUNT = 8,
+  PCIE_IRQ = 0x20,            /* 32 to 35 */
+  VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
 };
 
 enum {
-    NUTSHELL_MROM,
-    NUTSHELL_PLIC,
-    NUTSHELL_CLINT,
-    NUTSHELL_UARTLITE,
-    NUTSHELL_GCPT,
-    NUTSHELL_DRAM,
+  NUTSHELL_VGA,
+  NUTSHELL_VMEM,
+  NUTSHELL_PLIC,
+  NUTSHELL_CLINT,
+  NUTSHELL_UARTLITE,
+  NUTSHELL_FLASH,
+  NUTSHELL_SD,
+  NUTSHELL_DMA,
+  // NUTSHELL_GCPT,
+  NUTSHELL_DRAM,
+  NUTSHELL_MROM,
+  NUTSHELL_SRAM
 };
 
 /*
@@ -83,615 +77,135 @@ enum {
 #define PLIC_CONTEXT_BASE 0x200000
 #define PLIC_CONTEXT_STRIDE 0x1000
 
+// refer src/main/scala/sim/SimMMIO.scala
+// refer src/main/scala/system/NutShell.scala
+// https://github.com/OpenXiangShan/NEMU/blob/master/configs/riscv64-nutshell_defconfig
+//TODO: 额外加的mrom sram
 static const MemMapEntry nutshell_memmap[] = {
-    [NUTSHELL_MROM] = { 0x1000, 0xf000 },
-    [NUTSHELL_PLIC] = { 0x3c000000, 0x4000000 },
-    [NUTSHELL_CLINT] = { 0x38000000, 0x10000 },
-    [NUTSHELL_UARTLITE] = { 0x40600000, 0x1000 },
-    [NUTSHELL_GCPT] = { 0x50000000, 0x8000000 },
-    [NUTSHELL_DRAM] = { 0x80000000, 0x0 },
+    [NUTSHELL_MROM]     = {0x00000000, 0x20000},
+    [NUTSHELL_SRAM]     = {0x00020000, 0xe0000 },
+    [NUTSHELL_CLINT]    = {0x38000000, 0x00010000},
+    [NUTSHELL_PLIC]     = {0x3c000000, 0x04000000},
+    [NUTSHELL_FLASH]    = {0x40000000, 0x1000},
+    [NUTSHELL_SD]       = {0x40002000, 0x1000},
+    [NUTSHELL_DMA]      = {0x40003000, 0x1000},
+    [NUTSHELL_UARTLITE] = {0x40600000, 0x10},
+    [NUTSHELL_DRAM]     = {0x80000000, 0x0}
 };
 
-// static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
-// {
-//     NutshellSoCState *s = NUTSHELL_MACHINE(machine);
-//     int fd = -1;
-//     int compressed_size;
-//     int decompress_result;
-//     char *compress_file_buf = NULL;
-//     int load_compressed_size;
+static void nutshell_cpu_create(MachineState *machine) {
+  NUTSHELLState *s = NUTSHELL_MACHINE(machine);
+  object_initialize_child(OBJECT(machine), "c-cluster", &s->c_cluster,
+                          TYPE_CPU_CLUSTER);
 
-//     uint64_t frame_content_size;
+  object_initialize_child(OBJECT(machine), "c-cpus", &s->c_cpus,
+                          TYPE_RISCV_HART_ARRAY);
 
-//     if (checkpoint_path) {
-//         fd = open(checkpoint_path, O_RDONLY | O_BINARY);
-//         if (fd < 0) {
-//             error_report("Can't open checkpoint: %s", checkpoint_path);
-//             return -1;
-//         }
-
-//         compressed_size = lseek(fd, 0, SEEK_END);
-//         if (compressed_size == 0) {
-//             error_report("Checkpoint size could not be zero");
-//             return -1;
-//         }
-//         lseek(fd, 0, SEEK_SET);
-
-//         compress_file_buf = g_malloc(compressed_size);
-//         load_compressed_size = read(fd, compress_file_buf, compressed_size);
-
-//         if (load_compressed_size != compressed_size) {
-//             close(fd);
-//             g_free(compress_file_buf);
-//             error_report("File read error, file size: %d, read size %d",
-//                          compressed_size, load_compressed_size);
-//             return -1;
-//         }
-
-//         close(fd);
-
-//         frame_content_size =
-//             ZSTD_getFrameContentSize(compress_file_buf, compressed_size);
-
-//         decompress_result = ZSTD_decompress(s->memory, frame_content_size,
-//                                             compress_file_buf, compressed_size);
-
-//         g_free(compress_file_buf);
-
-//         if (ZSTD_isError(decompress_result)) {
-//             error_report("Checkpoint decompress error, %s",
-//                          ZSTD_getErrorName(decompress_result));
-//             return -1;
-//         }
-
-//         info_report("load checkpoint %s success, frame_content_size %ld",
-//                     checkpoint_path, frame_content_size);
-//         return 1;
-//     } else {
-//         error_report("Checkpoint path is NULL");
-//         return -1;
-//     }
-// }
-
-// static int load_gcpt_restore(MachineState *machine,
-//                              const char *gcpt_restore_path)
-// {
-//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-//     int fd = -1;
-//     int gcpt_restore_file_size = 0;
-//     int gcpt_restore_file_read_size = 0;
-//     if (gcpt_restore_path) {
-//         fd = open(gcpt_restore_path, O_RDONLY | O_BINARY);
-//         if (fd < 0) {
-//             error_report("Can't open gcpt_restore: %s", gcpt_restore_path);
-//             return -1;
-//         }
-//         gcpt_restore_file_size = lseek(fd, 0, SEEK_END);
-//         // for now gcpt_restore cannot bigger than 1M
-//         if (gcpt_restore_file_size == 0 ||
-//             gcpt_restore_file_size > 1 * 1024 * 1024) {
-//             close(fd);
-//             error_report("Gcpt size is zero or too large");
-//             return -1;
-//         }
-//         lseek(fd, 0, SEEK_SET);
-
-//         if (read(fd, s->memory, gcpt_restore_file_size) !=
-//             gcpt_restore_file_size) {
-//             close(fd);
-//             error_report("File read error, file size: %d, read size %d",
-//                          gcpt_restore_file_size, gcpt_restore_file_read_size);
-//             return -1;
-//         }
-//         close(fd);
-//     }
-//     info_report("load gcpt_restore success, load size %d, file_path %s",
-//                 gcpt_restore_file_size, gcpt_restore_path);
-
-//     return 1;
-// }
-
-// static void init_limit_instructions(MachineState *machine)
-// {
-//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-//     FILE *simpoints_file = NULL;
-//     FILE *weights_file = NULL;
-
-//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-//         assert(s->nutshell_args.cpt_interval);
-//         info_report("Taking simpoint checkpionts with cpt interval %lu warmup "
-//                     "interval %lu",
-//                     s->nutshell_args.cpt_interval,
-//                     s->nutshell_args.warmup_interval);
-
-//         GString *simpoints_path = g_string_new(NULL);
-//         GString *weights_path = g_string_new(NULL);
-//         g_string_printf(simpoints_path, "%s/%s",
-//                         s->path_manager.simpoint_path->str, "simpoints0");
-//         g_string_printf(weights_path, "%s/%s",
-//                         s->path_manager.simpoint_path->str, "weights0");
-
-//         simpoints_file = fopen(simpoints_path->str, "r");
-//         weights_file = fopen(weights_path->str, "r");
-
-//         assert(simpoints_file);
-//         assert(weights_file);
-
-//         uint64_t simpoint_location, simpoint_id, weight_id;
-//         char weight[128];
-
-//         while (fscanf(simpoints_file, "%lu %lu\n", &simpoint_location,
-//                       &simpoint_id) != EOF &&
-//                fscanf(weights_file, "%s %lu\n", weight, &weight_id) != EOF) {
-//             assert(weight_id == simpoint_id);
-//             GString *weight_str = g_string_new(weight);
-
-//             s->simpoint_info.cpt_instructions =
-//                 g_list_append(s->simpoint_info.cpt_instructions,
-//                               GINT_TO_POINTER(simpoint_location));
-//             s->simpoint_info.weights =
-//                 g_list_append(s->simpoint_info.weights, weight_str);
-
-//             info_report("Simpoint %lu: @ %lu, weight: %s", simpoint_id,
-//                         simpoint_location, weight);
-//         }
-
-//         fclose(simpoints_file);
-//         fclose(weights_file);
-
-//     } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing) {
-//         info_report("Taking uniform checkpionts with interval %lu",
-//                     s->nutshell_args.cpt_interval);
-//         s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
-//     } else if (s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint){
-//         s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
-//     }
-//     else{
-//         error_report("Checkpoint mode just support SimpointCheckpoint and "
-//                      "UniformCheckpoint");
-//         exit(1);
-//     }
-// }
-
-// static gint g_compare_path(gconstpointer a, gconstpointer b)
-// {
-//     char tmp_str[512];
-//     int data_a;
-//     int data_b;
-//     sscanf(((GString *)a)->str, "%s %d %s", tmp_str, &data_a, tmp_str);
-//     sscanf(((GString *)b)->str, "%s %d %s", tmp_str, &data_b, tmp_str);
-//     if (data_a == data_b) {
-//         return 0;
-//     } else if (data_a < data_b) {
-//         return -1;
-//     } else {
-//         return 1;
-//     }
-// }
-
-// static gint g_compare_instrs(gconstpointer a, gconstpointer b)
-// {
-//     if (GPOINTER_TO_INT(a) == GPOINTER_TO_INT(b)) {
-//         return 0;
-//     } else if (GPOINTER_TO_INT(a) < GPOINTER_TO_INT(b)) {
-//         return -1;
-//     } else {
-//         return 1;
-//     }
-// }
-
-// static void check_path(gpointer data, gpointer user_data)
-// {
-//     info_report("%s", ((GString *)data)->str);
-// }
-
-// static void check_instrs(gpointer data, gpointer user_data)
-// {
-//     info_report("%d", GPOINTER_TO_INT(data));
-// }
-
-// static void replace_space(gpointer data, gpointer user_data)
-// {
-//     char str_before[512];
-//     char str_after[512];
-//     int instrs;
-//     sscanf(((GString *)data)->str, "%s %d %s", str_before, &instrs, str_after);
-//     g_string_printf(data, "%s%d%s", str_before, instrs, str_after);
-// }
-
-
-// static void init_path_manager(MachineState *machine)
-// {
-//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-
-//     char base_output_path[1024];
-
-//     // we need to reorganize path as /output_base_dir/config_name/workload_name
-//     assert(s->nutshell_args.workload_name);
-// //    s->path_manager.workload_name = g_string_new(s->workload_name);
-//     assert(s->nutshell_args.base_dir);
-// //    s->path_manager.base_dir = g_string_new(s->output_base_dir);
-//     assert(s->nutshell_args.config_name);
-// //    s->path_manager.config_name = g_string_new(s->config_name);
-
-//     if ((s->nutshell_args.workload_name->len + s->nutshell_args.base_dir->len + s->nutshell_args.config_name->len) >= 1024) {
-//         error_report(
-//             "/output_base_dir/config_name/workload_name string too long");
-//     }
-
-//     sprintf(base_output_path, "%s/%s/%s", s->nutshell_args.base_dir->str, s->nutshell_args.config_name->str,
-//             s->nutshell_args.workload_name->str);
-
-//     info_report("PathManager: Checkpoint output path %s", base_output_path);
-
-//     // prepare simpoint path for init serializer
-//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-//         assert(s->nutshell_args.simpoint_path);
-//         s->path_manager.simpoint_path = g_string_new(s->nutshell_args.simpoint_path);
-//         g_string_printf(s->path_manager.simpoint_path, "%s/%s",
-//                         s->nutshell_args.simpoint_path, s->nutshell_args.workload_name->str);
-//     }
-
-//     // Simpoint need prepare_simpoint_path
-//     // Uniform need prepare interval
-//     init_limit_instructions(machine);
-
-//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-// //        g_list_foreach(s->simpoint_info.cpt_instructions, prepare_output_path,
-// //                       base_output_path);
-//         GList *iterator = NULL;
-//         for (iterator = s->simpoint_info.cpt_instructions; iterator; iterator = iterator->next) {
-//             GString *checkpoint_path = g_string_new(NULL);
-//             gint data_position =
-//                 g_list_index(s->simpoint_info.cpt_instructions, iterator->data);
-
-//             g_string_printf(
-//                 checkpoint_path, "%s/%d/_ %d _%s.gz", (char *)base_output_path,
-//                 GPOINTER_TO_INT(iterator->data),
-//                 GPOINTER_TO_INT(iterator->data),
-//                 ((GString *)(g_list_nth(s->simpoint_info.weights, data_position)->data))
-//                     ->str);
-//             info_report("Serializer initfinish");
-//             // base_path/cpt_instruction_limit/_CptInstructionLimit_weights.gz
-//             info_report("Checkpoint path: %s", checkpoint_path->str);
-
-//             s->path_manager.checkpoint_path_list =
-//                 g_list_append(s->path_manager.checkpoint_path_list, checkpoint_path);
-//         }
-
-//         s->path_manager.checkpoint_path_list =
-//             g_list_sort(s->path_manager.checkpoint_path_list, g_compare_path);
-
-//         s->simpoint_info.cpt_instructions =
-//             g_list_sort(s->simpoint_info.cpt_instructions, g_compare_instrs);
-
-//         g_list_foreach(s->path_manager.checkpoint_path_list, replace_space,
-//                        NULL);
-
-//         g_list_foreach(s->path_manager.checkpoint_path_list, check_path, NULL);
-//         g_list_foreach(s->simpoint_info.cpt_instructions, check_instrs, NULL);
-//     } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing || s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint) {
-//         s->path_manager.uniform_path = g_string_new(base_output_path);
-//         g_string_printf(s->path_manager.uniform_path, "%s/%s", base_output_path,
-//                         s->nutshell_args.workload_name->str);
-//         info_report("prepare for checkpoint %s\n",
-//                     s->path_manager.uniform_path->str);
-//     } else{
-//         error_report("Checkpoint mode just support SimpointCheckpoint and "
-//                      "UniformCheckpoint");
-//         exit(1);
-//     }
-// }
-
-// static void simpoint_init(MachineState *machine)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(machine);
-//     // As long as it is not NoCheckpoint mode, we need to initialize the output
-//     // path manager
-//     if (ns->nutshell_args.checkpoint_mode != NoCheckpoint) {
-//         init_path_manager(machine);
-//     }
-// }
-
-static void nutshell_load_firmware(MachineState *machine)
-{
-    const MemMapEntry *memmap = nutshell_memmap;
-    //    char *firmware_name;
-    NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-    uint64_t firmware_end_addr = 0;
-    uint64_t kernel_entry = 0;
-    uint64_t kernel_start_addr = 0;
-
-
-    // if (s->nutshell_args.checkpoint) {
-    //     info_report("Load checkpoint: %s", s->nutshell_args.checkpoint);
-    //     g_assert(load_checkpoint(machine, s->nutshell_args.checkpoint));
-    //     if (s->nutshell_args.gcpt_restore) {
-    //         info_report("Load gcpt_restore: %s", s->nutshell_args.gcpt_restore);
-    //         g_assert(load_gcpt_restore(machine, s->nutshell_args.gcpt_restore));
-    //     }
-    //     // load checkpoint donot need to load bios or kernel
-    //     goto prepare_start;
-    // }
-
-    firmware_end_addr = riscv_find_and_load_firmware(
-        machine, riscv_default_firmware_name(&s->soc[0]),
-        memmap[NUTSHELL_DRAM].base, NULL);
-
-    if (machine->firmware && firmware_end_addr) {
-        info_report("Firmware load: %s, firmware end addr: %lx\n",
-                    machine->firmware, firmware_end_addr);
-    }
-
-    if (machine->kernel_filename && !kernel_entry) {
-        kernel_start_addr =
-            riscv_calc_kernel_start_addr(&s->soc[0], firmware_end_addr);
-        kernel_entry = riscv_load_kernel(machine, &s->soc[0], kernel_start_addr,
-                                         true, NULL);
-        info_report("%s %lx", machine->kernel_filename, kernel_entry);
-    }
-
-// prepare_start:
-    /* load the reset vector */
-    riscv_setup_rom_reset_vec(machine, &s->soc[0], memmap[NUTSHELL_DRAM].base,
-                              memmap[NUTSHELL_MROM].base, memmap[NUTSHELL_MROM].size,
-                              memmap[NUTSHELL_DRAM].base, memmap[NUTSHELL_DRAM].base);
+  object_property_set_str(OBJECT(&s->c_cpus), "cpu-type", machine->cpu_type,
+                          &error_abort);
+  object_property_set_int(OBJECT(&s->c_cpus), "hartid-base", 0, &error_abort);
+  object_property_set_int(OBJECT(&s->c_cpus), "num-harts", NUTSHELL_CPUS_MAX,
+                          &error_abort);
+  object_property_set_int(OBJECT(&s->c_cpus), "resetvec",
+                          nutshell_memmap[NUTSHELL_FLASH].base, &error_abort);
+  sysbus_realize(SYS_BUS_DEVICE(&s->c_cpus), &error_fatal);
 }
 
-static DeviceState *nutshell_create_plic(const MemMapEntry *memmap, int socket,
-                                     int base_hartid, int hart_count)
-{
-    DeviceState *ret;
-    char *plic_hart_config;
+extern MemoryRegion *get_system_memory(void);
+static void nutshell_memory_create(MachineState *machine) {
+  MemoryRegion * system_memory = get_system_memory();
+  NUTSHELLState * s = NUTSHELL_MACHINE(machine);
+  MemoryRegion *main_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
 
-    /* Per-socket PLIC hart topology configuration string */
-    plic_hart_config = riscv_plic_hart_config_string(hart_count);
+  memory_region_init_ram(main_mem, NULL, "riscv_nutshell_board.dram",
+                           machine->ram_size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                nutshell_memmap[NUTSHELL_DRAM].base, main_mem);
 
-    /* Per-socket PLIC */
-    ret = sifive_plic_create(
-        memmap[NUTSHELL_PLIC].base + socket * memmap[NUTSHELL_PLIC].size,
-        plic_hart_config, hart_count, base_hartid, PLIC_NUM_SOURCES,
-        PLIC_NUM_PRIORITIES, PLIC_PRIORITY_BASE, PLIC_PENDING_BASE,
-        PLIC_ENABLE_BASE, PLIC_ENABLE_STRIDE, PLIC_CONTEXT_BASE,
-        PLIC_CONTEXT_STRIDE, memmap[NUTSHELL_PLIC].size);
+  memory_region_init_ram(sram_mem, NULL, "riscv_nutshell_board.sram",
+                           nutshell_memmap[NUTSHELL_SRAM].size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                nutshell_memmap[NUTSHELL_SRAM].base, sram_mem);
 
-    g_free(plic_hart_config);
+  memory_region_init_rom(mask_rom, NULL, "riscv_nutshell_board.mrom",
+                           nutshell_memmap[NUTSHELL_MROM].size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                nutshell_memmap[NUTSHELL_MROM].base, mask_rom);
 
-    return ret;
+  nutshell_setup_rom_reset_vec(machine, &s->c_cpus,
+                               nutshell_memmap[NUTSHELL_FLASH].base,
+                               nutshell_memmap[NUTSHELL_MROM].base,
+                               nutshell_memmap[NUTSHELL_MROM].size, 
+                               0, 0);
+                        
 }
 
-static void nutshell_machine_init(MachineState *machine)
-{
-    const MemMapEntry *memmap = nutshell_memmap;
-    NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-    MemoryRegion *system_memory = get_system_memory();
-    MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
-    MemoryRegion *nutshell_memory = g_new(MemoryRegion, 1);
-    // MemoryRegion *nutshell_gcpt = g_new(MemoryRegion, 1);
-    DeviceState *dev;
-    char *soc_name;
-    int i, base_hartid, hart_count;
+void nutshell_setup_rom_reset_vec(MachineState *machine,
+                                  RISCVHartArrayState *harts, hwaddr start_addr,
+                                  hwaddr rom_base, hwaddr rom_size,
+                                  uint64_t kernel_entry,
+                                  uint64_t fdt_load_addr) {
+  int i;
+  uint32_t start_addr_hi32 = 0x00000000;
+  uint32_t fdt_load_addr_hi32 = 0x00000000;
 
-    for (i = 0; i < riscv_socket_count(machine); i++) {
-        if (!riscv_socket_check_hartids(machine, i)) {
-            error_report("discontinuous hartids in socket%d", i);
-            exit(1);
-        }
+  if (!riscv_is_32bit(harts)) {
+    start_addr_hi32 = start_addr >> 32;
+    fdt_load_addr_hi32 = fdt_load_addr >> 32;
+  }
+  /* reset vector */
+  uint32_t reset_vec[10] = {
+      0x00000297, /* 1:  auipc  t0, %pcrel_hi(fw_dyn) */
+      0x02828613, /*     addi   a2, t0, %pcrel_lo(1b) */
+      0xf1402573, /*     csrr   a0, mhartid  */
+      0,
+      0,
+      0x00028067, /*     jr     t0 */
+      start_addr, /* start: .dword */
+      start_addr_hi32,
+      fdt_load_addr, /* fdt_laddr: .dword */
+      fdt_load_addr_hi32,
+      /* fw_dyn: */
+  };
+  if (riscv_is_32bit(harts)) {
+    reset_vec[3] = 0x0202a583; /*     lw     a1, 32(t0) */
+    reset_vec[4] = 0x0182a283; /*     lw     t0, 24(t0) */
+  } else {
+    reset_vec[3] = 0x0202b583; /*     ld     a1, 32(t0) */
+    reset_vec[4] = 0x0182b283; /*     ld     t0, 24(t0) */
+  }
 
-        base_hartid = riscv_socket_first_hartid(machine, i);
-        if (base_hartid < 0) {
-            error_report("can't find hartid base for socket%d", i);
-            exit(1);
-        }
+  if (!harts->harts[0].cfg.ext_zicsr) {
+    /*
+     * The Zicsr extension has been disabled, so let's ensure we don't
+     * run the CSR instruction. Let's fill the address with a non
+     * compressed nop.
+     */
+    reset_vec[2] = 0x00000013; /*     addi   x0, x0, 0 */
+  }
 
-        hart_count = riscv_socket_hart_count(machine, i);
-        if (hart_count < 0) {
-            error_report("can't find hart count for socket%d", i);
-            exit(1);
-        }
+  /* copy in the reset vector in little_endian byte order */
+  for (i = 0; i < ARRAY_SIZE(reset_vec); i++) {
+    reset_vec[i] = cpu_to_le32(reset_vec[i]);
+  }
+}
 
-        soc_name = g_strdup_printf("soc%d", i);
-        object_initialize_child(OBJECT(machine), soc_name, &s->soc[i],
-                                TYPE_RISCV_HART_ARRAY);
-        g_free(soc_name);
-        object_property_set_str(OBJECT(&s->soc[i]), "cpu-type",
-                                machine->cpu_type, &error_abort);
-        object_property_set_int(OBJECT(&s->soc[i]), "hartid-base", base_hartid,
-                                &error_abort);
-        object_property_set_int(OBJECT(&s->soc[i]), "num-harts", hart_count,
-                                &error_abort);
-        sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_fatal);
+static void nutshell_machine_init(MachineState *machine) {
+  nutshell_cpu_create(machine);
+  nutshell_memory_create(machine);
+}
 
-        /* Core Local Interruptor (timer and IPI) for each socket */
-        /* Per-socket SiFive CLINT */
-        riscv_aclint_swi_create(memmap[NUTSHELL_CLINT].base +
-                                    i * memmap[NUTSHELL_CLINT].size,
-                                base_hartid, hart_count, false);
+static void nutshell_machine_class_init(ObjectClass *oc, void *data) {
+  MachineClass *mc = MACHINE_CLASS(oc);
 
-        // mtime = swi
-        riscv_aclint_mtimer_create(
-            memmap[NUTSHELL_CLINT].base + i * memmap[NUTSHELL_CLINT].size +
-                RISCV_ACLINT_SWI_SIZE,
-            memmap[NUTSHELL_CLINT].size, base_hartid, hart_count,
-            RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-            RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
-
-        /* Per-socket interrupt controller */
-        s->irqchip[i] = nutshell_create_plic(memmap, i, base_hartid, hart_count);
-    }
-
-    /* boot rom */
-    memory_region_init_rom(mask_rom, NULL, "riscv.nutshell.mrom",
-                           memmap[NUTSHELL_MROM].size, &error_fatal);
-    memory_region_add_subregion(system_memory, memmap[NUTSHELL_MROM].base,
-                                mask_rom);
-
-    // memory
-    s->memory = g_malloc(machine->ram_size);
-    memory_region_init_ram_ptr(nutshell_memory, NULL, "riscv.nutshell.ram",
-                               machine->ram_size, s->memory);
-    /* register system main memory (actual RAM) */
-    memory_region_add_subregion(system_memory, memmap[NUTSHELL_DRAM].base,
-                                nutshell_memory);
-
-    // gcpt device
-    // s->gcpt_memory = g_malloc(nutshell_memmap[NUTSHELL_GCPT].size);
-    // memory_region_init_ram_ptr(nutshell_gcpt, NULL, "riscv.nutshell.gcpt",
-    //                            nutshell_memmap[NUTSHELL_GCPT].size, s->gcpt_memory);
-    // memory_region_add_subregion(system_memory, memmap[NUTSHELL_GCPT].base,
-    //                             nutshell_gcpt);
-
-    // uartlite
-    dev = qdev_new(TYPE_XILINX_UARTLITE);
-    qdev_prop_set_chr(dev, "chardev", serial_hd(0));
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    memory_region_add_subregion(system_memory, memmap[NUTSHELL_UARTLITE].base,
-                                sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
-
-    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
-                       qdev_get_gpio_in(DEVICE(s->irqchip[0]), UART0_IRQ));
-
-    // simpoint_init(machine);
-    nutshell_load_firmware(machine);
-    // multicore_checkpoint_init(machine);
+  mc->desc = "RISC-V Nutshell board";
+  mc->init = nutshell_machine_init;
+  mc->max_cpus = NUTSHELL_CPUS_MAX;
 }
 
 static void nutshell_machine_instance_init(Object *obj) {}
-
-
-// static void nutshell_machine_set_checkpoint_path(Object *obj, const char *value,
-//                                              Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.checkpoint = g_strdup(value);
-// }
-
-// static void nutshell_machine_set_gcpt_restore_path(Object *obj, const char *value,
-//                                                Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.gcpt_restore = g_strdup(value);
-// }
-
-// static void nutshell_machine_set_config_name(Object *obj, const char *value,
-//                                          Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.config_name = g_string_new(value);
-// }
-
-// static void nutshell_machine_set_output_base_dir(Object *obj, const char *value,
-//                                              Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.base_dir = g_string_new(value);
-// }
-
-// static void nutshell_machine_set_sync_interval(Object *obj, const char *value,
-//                                            Error **errp)
-// {
-//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-//     ms->nutshell_args.sync_interval = atol(value);
-// }
-
-// static void nutshell_machine_set_cpt_interval(Object *obj, const char *value,
-//                                           Error **errp)
-// {
-//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-//     ms->nutshell_args.cpt_interval = atol(value);
-// }
-
-// static void nutshell_machine_set_warmup_interval(Object *obj, const char *value,
-//                                              Error **errp)
-// {
-//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-//     ms->nutshell_args.warmup_interval = atol(value);
-// }
-
-// static void nutshell_machine_set_simpoint_path(Object *obj, const char *value,
-//                                            Error **errp)
-// {
-//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-//     ms->nutshell_args.simpoint_path = g_strdup(value);
-// }
-
-// static void nutshell_machine_set_workload_name(Object *obj, const char *value,
-//                                            Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.workload_name = g_string_new(value);
-// }
-
-// static void nutshell_machine_set_skip_boot(Object *obj, bool value,
-//                                            Error **errp)
-// {
-//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-//     ns->nutshell_args.skip_boot = value;
-// }
-
-// static void nutshell_machine_set_checkpoint_mode(Object *obj, const char *value,
-//                                              Error **errp)
-// {
-//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-//     if (strcmp(value, "NoCheckpoint") == 0) {
-//         ms->nutshell_args.checkpoint_mode = NoCheckpoint;
-//     } else if (strcmp(value, "SimpointCheckpoint") == 0) {
-//         ms->nutshell_args.checkpoint_mode = SimpointCheckpointing;
-//     } else if (strcmp(value, "UniformCheckpoint") == 0) {
-//         ms->nutshell_args.checkpoint_mode = UniformCheckpointing;
-//     } else if (strcmp(value, "SyncUniformCheckpoint") == 0) {
-//         ms->nutshell_args.checkpoint_mode = SyncUniformCheckpoint;
-//     } else {
-//         ms->nutshell_args.checkpoint_mode = NoCheckpoint;
-//         error_setg(errp, "Invalid checkpoint mode");
-//         error_append_hint(
-//             errp, "Valid values are Nocheckpoint, SimpointCheckpoint, and "
-//                   "UniformCheckpoint.\n");
-//     }
-// }
-
-static void nutshell_machine_class_init(ObjectClass *oc, void *data)
-{
-    MachineClass *mc = MACHINE_CLASS(oc);
-
-    mc->desc = "RISC-V NUTSHELL board";
-    mc->init = nutshell_machine_init;
-    mc->max_cpus = NUTSHELL_CPUS_MAX;
-    mc->min_cpus = NUTSHELL_CPUS_MIN;
-    mc->default_cpu_type = TYPE_RISCV_CPU_BASE;
-    mc->possible_cpu_arch_ids = riscv_numa_possible_cpu_arch_ids;
-    mc->cpu_index_to_instance_props = riscv_numa_cpu_index_to_props;
-    mc->get_default_cpu_node_id = riscv_numa_get_default_cpu_node_id;
-    mc->numa_mem_supported = true;
-    mc->default_ram_size = 8 * GiB;
-    /* platform instead of architectural choice */
-    mc->cpu_cluster_has_numa_boundary = true;
-    mc->default_ram_id = "riscv.nutshell.ram";
-
-    // object_class_property_add_str(oc, "checkpoint", NULL,
-    //                               nutshell_machine_set_checkpoint_path);
-    // object_class_property_add_str(oc, "gcpt-restore", NULL,
-    //                               nutshell_machine_set_gcpt_restore_path);
-    // object_class_property_add_str(oc, "config-name", NULL,
-    //                               nutshell_machine_set_config_name);
-    // object_class_property_add_str(oc, "output-base-dir", NULL,
-    //                               nutshell_machine_set_output_base_dir);
-    // object_class_property_add_str(oc, "sync-interval", NULL,
-    //                               nutshell_machine_set_sync_interval);
-    // object_class_property_add_str(oc, "cpt-interval", NULL,
-    //                               nutshell_machine_set_cpt_interval);
-    // object_class_property_add_str(oc, "warmup-interval", NULL,
-    //                               nutshell_machine_set_warmup_interval);
-    // object_class_property_add_str(oc, "simpoint-path", NULL,
-    //                               nutshell_machine_set_simpoint_path);
-    // object_class_property_add_str(oc, "workload", NULL,
-    //                               nutshell_machine_set_workload_name);
-    // object_class_property_add_str(oc, "checkpoint-mode", NULL,
-    //                               nutshell_machine_set_checkpoint_mode);
-    // object_class_property_add_bool(oc, "skip-boot", NULL,
-    //                               nutshell_machine_set_skip_boot);
-}
 
 static const TypeInfo nutshell_machine_typeinfo = {
     .name = MACHINE_TYPE_NAME("nutshell"),
@@ -701,9 +215,8 @@ static const TypeInfo nutshell_machine_typeinfo = {
     .instance_size = sizeof(NUTSHELLState),
 };
 
-static void nutshell_machine_init_register_types(void)
-{
-    type_register_static(&nutshell_machine_typeinfo);
+static void nutshell_machine_init_register_types(void) {
+  type_register_static(&nutshell_machine_typeinfo);
 }
 
 type_init(nutshell_machine_init_register_types)

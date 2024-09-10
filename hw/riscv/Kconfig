@@ -66,6 +66,13 @@ config SHAKTI_C
     select SIFIVE_PLIC
     select UNIMP
 
+config NUTSHELL
+    bool
+    default y
+    depends on RISCV64
+    select SIFIVE_PLIC
+    select UNIMP
+
 config SIFIVE_E
     bool
     default y
