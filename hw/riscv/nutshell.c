@@ -92,306 +92,306 @@ static const MemMapEntry nutshell_memmap[] = {
     [NUTSHELL_DRAM] = { 0x80000000, 0x0 },
 };
 
-static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
-{
-    NutshellSoCState *s = NUTSHELL_MACHINE(machine);
-    int fd = -1;
-    int compressed_size;
-    int decompress_result;
-    char *compress_file_buf = NULL;
-    int load_compressed_size;
+// static int load_checkpoint(MachineState *machine, const char *checkpoint_path)
+// {
+//     NutshellSoCState *s = NUTSHELL_MACHINE(machine);
+//     int fd = -1;
+//     int compressed_size;
+//     int decompress_result;
+//     char *compress_file_buf = NULL;
+//     int load_compressed_size;
 
-    uint64_t frame_content_size;
+//     uint64_t frame_content_size;
 
-    if (checkpoint_path) {
-        fd = open(checkpoint_path, O_RDONLY | O_BINARY);
-        if (fd < 0) {
-            error_report("Can't open checkpoint: %s", checkpoint_path);
-            return -1;
-        }
+//     if (checkpoint_path) {
+//         fd = open(checkpoint_path, O_RDONLY | O_BINARY);
+//         if (fd < 0) {
+//             error_report("Can't open checkpoint: %s", checkpoint_path);
+//             return -1;
+//         }
 
-        compressed_size = lseek(fd, 0, SEEK_END);
-        if (compressed_size == 0) {
-            error_report("Checkpoint size could not be zero");
-            return -1;
-        }
-        lseek(fd, 0, SEEK_SET);
+//         compressed_size = lseek(fd, 0, SEEK_END);
+//         if (compressed_size == 0) {
+//             error_report("Checkpoint size could not be zero");
+//             return -1;
+//         }
+//         lseek(fd, 0, SEEK_SET);
 
-        compress_file_buf = g_malloc(compressed_size);
-        load_compressed_size = read(fd, compress_file_buf, compressed_size);
+//         compress_file_buf = g_malloc(compressed_size);
+//         load_compressed_size = read(fd, compress_file_buf, compressed_size);
 
-        if (load_compressed_size != compressed_size) {
-            close(fd);
-            g_free(compress_file_buf);
-            error_report("File read error, file size: %d, read size %d",
-                         compressed_size, load_compressed_size);
-            return -1;
-        }
+//         if (load_compressed_size != compressed_size) {
+//             close(fd);
+//             g_free(compress_file_buf);
+//             error_report("File read error, file size: %d, read size %d",
+//                          compressed_size, load_compressed_size);
+//             return -1;
+//         }
 
-        close(fd);
+//         close(fd);
 
-        frame_content_size =
-            ZSTD_getFrameContentSize(compress_file_buf, compressed_size);
+//         frame_content_size =
+//             ZSTD_getFrameContentSize(compress_file_buf, compressed_size);
 
-        decompress_result = ZSTD_decompress(s->memory, frame_content_size,
-                                            compress_file_buf, compressed_size);
+//         decompress_result = ZSTD_decompress(s->memory, frame_content_size,
+//                                             compress_file_buf, compressed_size);
 
-        g_free(compress_file_buf);
+//         g_free(compress_file_buf);
 
-        if (ZSTD_isError(decompress_result)) {
-            error_report("Checkpoint decompress error, %s",
-                         ZSTD_getErrorName(decompress_result));
-            return -1;
-        }
+//         if (ZSTD_isError(decompress_result)) {
+//             error_report("Checkpoint decompress error, %s",
+//                          ZSTD_getErrorName(decompress_result));
+//             return -1;
+//         }
 
-        info_report("load checkpoint %s success, frame_content_size %ld",
-                    checkpoint_path, frame_content_size);
-        return 1;
-    } else {
-        error_report("Checkpoint path is NULL");
-        return -1;
-    }
-}
+//         info_report("load checkpoint %s success, frame_content_size %ld",
+//                     checkpoint_path, frame_content_size);
+//         return 1;
+//     } else {
+//         error_report("Checkpoint path is NULL");
+//         return -1;
+//     }
+// }
 
-static int load_gcpt_restore(MachineState *machine,
-                             const char *gcpt_restore_path)
-{
-    NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-    int fd = -1;
-    int gcpt_restore_file_size = 0;
-    int gcpt_restore_file_read_size = 0;
-    if (gcpt_restore_path) {
-        fd = open(gcpt_restore_path, O_RDONLY | O_BINARY);
-        if (fd < 0) {
-            error_report("Can't open gcpt_restore: %s", gcpt_restore_path);
-            return -1;
-        }
-        gcpt_restore_file_size = lseek(fd, 0, SEEK_END);
-        // for now gcpt_restore cannot bigger than 1M
-        if (gcpt_restore_file_size == 0 ||
-            gcpt_restore_file_size > 1 * 1024 * 1024) {
-            close(fd);
-            error_report("Gcpt size is zero or too large");
-            return -1;
-        }
-        lseek(fd, 0, SEEK_SET);
+// static int load_gcpt_restore(MachineState *machine,
+//                              const char *gcpt_restore_path)
+// {
+//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
+//     int fd = -1;
+//     int gcpt_restore_file_size = 0;
+//     int gcpt_restore_file_read_size = 0;
+//     if (gcpt_restore_path) {
+//         fd = open(gcpt_restore_path, O_RDONLY | O_BINARY);
+//         if (fd < 0) {
+//             error_report("Can't open gcpt_restore: %s", gcpt_restore_path);
+//             return -1;
+//         }
+//         gcpt_restore_file_size = lseek(fd, 0, SEEK_END);
+//         // for now gcpt_restore cannot bigger than 1M
+//         if (gcpt_restore_file_size == 0 ||
+//             gcpt_restore_file_size > 1 * 1024 * 1024) {
+//             close(fd);
+//             error_report("Gcpt size is zero or too large");
+//             return -1;
+//         }
+//         lseek(fd, 0, SEEK_SET);
 
-        if (read(fd, s->memory, gcpt_restore_file_size) !=
-            gcpt_restore_file_size) {
-            close(fd);
-            error_report("File read error, file size: %d, read size %d",
-                         gcpt_restore_file_size, gcpt_restore_file_read_size);
-            return -1;
-        }
-        close(fd);
-    }
-    info_report("load gcpt_restore success, load size %d, file_path %s",
-                gcpt_restore_file_size, gcpt_restore_path);
+//         if (read(fd, s->memory, gcpt_restore_file_size) !=
+//             gcpt_restore_file_size) {
+//             close(fd);
+//             error_report("File read error, file size: %d, read size %d",
+//                          gcpt_restore_file_size, gcpt_restore_file_read_size);
+//             return -1;
+//         }
+//         close(fd);
+//     }
+//     info_report("load gcpt_restore success, load size %d, file_path %s",
+//                 gcpt_restore_file_size, gcpt_restore_path);
 
-    return 1;
-}
+//     return 1;
+// }
 
-static void init_limit_instructions(MachineState *machine)
-{
-    NUTSHELLState *s = NUTSHELL_MACHINE(machine);
-    FILE *simpoints_file = NULL;
-    FILE *weights_file = NULL;
+// static void init_limit_instructions(MachineState *machine)
+// {
+//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
+//     FILE *simpoints_file = NULL;
+//     FILE *weights_file = NULL;
 
-    if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-        assert(s->nutshell_args.cpt_interval);
-        info_report("Taking simpoint checkpionts with cpt interval %lu warmup "
-                    "interval %lu",
-                    s->nutshell_args.cpt_interval,
-                    s->nutshell_args.warmup_interval);
+//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
+//         assert(s->nutshell_args.cpt_interval);
+//         info_report("Taking simpoint checkpionts with cpt interval %lu warmup "
+//                     "interval %lu",
+//                     s->nutshell_args.cpt_interval,
+//                     s->nutshell_args.warmup_interval);
 
-        GString *simpoints_path = g_string_new(NULL);
-        GString *weights_path = g_string_new(NULL);
-        g_string_printf(simpoints_path, "%s/%s",
-                        s->path_manager.simpoint_path->str, "simpoints0");
-        g_string_printf(weights_path, "%s/%s",
-                        s->path_manager.simpoint_path->str, "weights0");
+//         GString *simpoints_path = g_string_new(NULL);
+//         GString *weights_path = g_string_new(NULL);
+//         g_string_printf(simpoints_path, "%s/%s",
+//                         s->path_manager.simpoint_path->str, "simpoints0");
+//         g_string_printf(weights_path, "%s/%s",
+//                         s->path_manager.simpoint_path->str, "weights0");
 
-        simpoints_file = fopen(simpoints_path->str, "r");
-        weights_file = fopen(weights_path->str, "r");
+//         simpoints_file = fopen(simpoints_path->str, "r");
+//         weights_file = fopen(weights_path->str, "r");
 
-        assert(simpoints_file);
-        assert(weights_file);
+//         assert(simpoints_file);
+//         assert(weights_file);
 
-        uint64_t simpoint_location, simpoint_id, weight_id;
-        char weight[128];
+//         uint64_t simpoint_location, simpoint_id, weight_id;
+//         char weight[128];
 
-        while (fscanf(simpoints_file, "%lu %lu\n", &simpoint_location,
-                      &simpoint_id) != EOF &&
-               fscanf(weights_file, "%s %lu\n", weight, &weight_id) != EOF) {
-            assert(weight_id == simpoint_id);
-            GString *weight_str = g_string_new(weight);
+//         while (fscanf(simpoints_file, "%lu %lu\n", &simpoint_location,
+//                       &simpoint_id) != EOF &&
+//                fscanf(weights_file, "%s %lu\n", weight, &weight_id) != EOF) {
+//             assert(weight_id == simpoint_id);
+//             GString *weight_str = g_string_new(weight);
 
-            s->simpoint_info.cpt_instructions =
-                g_list_append(s->simpoint_info.cpt_instructions,
-                              GINT_TO_POINTER(simpoint_location));
-            s->simpoint_info.weights =
-                g_list_append(s->simpoint_info.weights, weight_str);
+//             s->simpoint_info.cpt_instructions =
+//                 g_list_append(s->simpoint_info.cpt_instructions,
+//                               GINT_TO_POINTER(simpoint_location));
+//             s->simpoint_info.weights =
+//                 g_list_append(s->simpoint_info.weights, weight_str);
 
-            info_report("Simpoint %lu: @ %lu, weight: %s", simpoint_id,
-                        simpoint_location, weight);
-        }
+//             info_report("Simpoint %lu: @ %lu, weight: %s", simpoint_id,
+//                         simpoint_location, weight);
+//         }
 
-        fclose(simpoints_file);
-        fclose(weights_file);
+//         fclose(simpoints_file);
+//         fclose(weights_file);
 
-    } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing) {
-        info_report("Taking uniform checkpionts with interval %lu",
-                    s->nutshell_args.cpt_interval);
-        s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
-    } else if (s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint){
-        s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
-    }
-    else{
-        error_report("Checkpoint mode just support SimpointCheckpoint and "
-                     "UniformCheckpoint");
-        exit(1);
-    }
-}
+//     } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing) {
+//         info_report("Taking uniform checkpionts with interval %lu",
+//                     s->nutshell_args.cpt_interval);
+//         s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
+//     } else if (s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint){
+//         s->checkpoint_info.next_uniform_point = s->nutshell_args.cpt_interval;
+//     }
+//     else{
+//         error_report("Checkpoint mode just support SimpointCheckpoint and "
+//                      "UniformCheckpoint");
+//         exit(1);
+//     }
+// }
 
-static gint g_compare_path(gconstpointer a, gconstpointer b)
-{
-    char tmp_str[512];
-    int data_a;
-    int data_b;
-    sscanf(((GString *)a)->str, "%s %d %s", tmp_str, &data_a, tmp_str);
-    sscanf(((GString *)b)->str, "%s %d %s", tmp_str, &data_b, tmp_str);
-    if (data_a == data_b) {
-        return 0;
-    } else if (data_a < data_b) {
-        return -1;
-    } else {
-        return 1;
-    }
-}
+// static gint g_compare_path(gconstpointer a, gconstpointer b)
+// {
+//     char tmp_str[512];
+//     int data_a;
+//     int data_b;
+//     sscanf(((GString *)a)->str, "%s %d %s", tmp_str, &data_a, tmp_str);
+//     sscanf(((GString *)b)->str, "%s %d %s", tmp_str, &data_b, tmp_str);
+//     if (data_a == data_b) {
+//         return 0;
+//     } else if (data_a < data_b) {
+//         return -1;
+//     } else {
+//         return 1;
+//     }
+// }
 
-static gint g_compare_instrs(gconstpointer a, gconstpointer b)
-{
-    if (GPOINTER_TO_INT(a) == GPOINTER_TO_INT(b)) {
-        return 0;
-    } else if (GPOINTER_TO_INT(a) < GPOINTER_TO_INT(b)) {
-        return -1;
-    } else {
-        return 1;
-    }
-}
+// static gint g_compare_instrs(gconstpointer a, gconstpointer b)
+// {
+//     if (GPOINTER_TO_INT(a) == GPOINTER_TO_INT(b)) {
+//         return 0;
+//     } else if (GPOINTER_TO_INT(a) < GPOINTER_TO_INT(b)) {
+//         return -1;
+//     } else {
+//         return 1;
+//     }
+// }
 
-static void check_path(gpointer data, gpointer user_data)
-{
-    info_report("%s", ((GString *)data)->str);
-}
+// static void check_path(gpointer data, gpointer user_data)
+// {
+//     info_report("%s", ((GString *)data)->str);
+// }
 
-static void check_instrs(gpointer data, gpointer user_data)
-{
-    info_report("%d", GPOINTER_TO_INT(data));
-}
+// static void check_instrs(gpointer data, gpointer user_data)
+// {
+//     info_report("%d", GPOINTER_TO_INT(data));
+// }
 
-static void replace_space(gpointer data, gpointer user_data)
-{
-    char str_before[512];
-    char str_after[512];
-    int instrs;
-    sscanf(((GString *)data)->str, "%s %d %s", str_before, &instrs, str_after);
-    g_string_printf(data, "%s%d%s", str_before, instrs, str_after);
-}
+// static void replace_space(gpointer data, gpointer user_data)
+// {
+//     char str_before[512];
+//     char str_after[512];
+//     int instrs;
+//     sscanf(((GString *)data)->str, "%s %d %s", str_before, &instrs, str_after);
+//     g_string_printf(data, "%s%d%s", str_before, instrs, str_after);
+// }
 
 
-static void init_path_manager(MachineState *machine)
-{
-    NUTSHELLState *s = NUTSHELL_MACHINE(machine);
+// static void init_path_manager(MachineState *machine)
+// {
+//     NUTSHELLState *s = NUTSHELL_MACHINE(machine);
 
-    char base_output_path[1024];
+//     char base_output_path[1024];
 
-    // we need to reorganize path as /output_base_dir/config_name/workload_name
-    assert(s->nutshell_args.workload_name);
-//    s->path_manager.workload_name = g_string_new(s->workload_name);
-    assert(s->nutshell_args.base_dir);
-//    s->path_manager.base_dir = g_string_new(s->output_base_dir);
-    assert(s->nutshell_args.config_name);
-//    s->path_manager.config_name = g_string_new(s->config_name);
+//     // we need to reorganize path as /output_base_dir/config_name/workload_name
+//     assert(s->nutshell_args.workload_name);
+// //    s->path_manager.workload_name = g_string_new(s->workload_name);
+//     assert(s->nutshell_args.base_dir);
+// //    s->path_manager.base_dir = g_string_new(s->output_base_dir);
+//     assert(s->nutshell_args.config_name);
+// //    s->path_manager.config_name = g_string_new(s->config_name);
 
-    if ((s->nutshell_args.workload_name->len + s->nutshell_args.base_dir->len + s->nutshell_args.config_name->len) >= 1024) {
-        error_report(
-            "/output_base_dir/config_name/workload_name string too long");
-    }
+//     if ((s->nutshell_args.workload_name->len + s->nutshell_args.base_dir->len + s->nutshell_args.config_name->len) >= 1024) {
+//         error_report(
+//             "/output_base_dir/config_name/workload_name string too long");
+//     }
 
-    sprintf(base_output_path, "%s/%s/%s", s->nutshell_args.base_dir->str, s->nutshell_args.config_name->str,
-            s->nutshell_args.workload_name->str);
+//     sprintf(base_output_path, "%s/%s/%s", s->nutshell_args.base_dir->str, s->nutshell_args.config_name->str,
+//             s->nutshell_args.workload_name->str);
 
-    info_report("PathManager: Checkpoint output path %s", base_output_path);
+//     info_report("PathManager: Checkpoint output path %s", base_output_path);
 
-    // prepare simpoint path for init serializer
-    if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-        assert(s->nutshell_args.simpoint_path);
-        s->path_manager.simpoint_path = g_string_new(s->nutshell_args.simpoint_path);
-        g_string_printf(s->path_manager.simpoint_path, "%s/%s",
-                        s->nutshell_args.simpoint_path, s->nutshell_args.workload_name->str);
-    }
+//     // prepare simpoint path for init serializer
+//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
+//         assert(s->nutshell_args.simpoint_path);
+//         s->path_manager.simpoint_path = g_string_new(s->nutshell_args.simpoint_path);
+//         g_string_printf(s->path_manager.simpoint_path, "%s/%s",
+//                         s->nutshell_args.simpoint_path, s->nutshell_args.workload_name->str);
+//     }
 
-    // Simpoint need prepare_simpoint_path
-    // Uniform need prepare interval
-    init_limit_instructions(machine);
+//     // Simpoint need prepare_simpoint_path
+//     // Uniform need prepare interval
+//     init_limit_instructions(machine);
 
-    if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
-//        g_list_foreach(s->simpoint_info.cpt_instructions, prepare_output_path,
-//                       base_output_path);
-        GList *iterator = NULL;
-        for (iterator = s->simpoint_info.cpt_instructions; iterator; iterator = iterator->next) {
-            GString *checkpoint_path = g_string_new(NULL);
-            gint data_position =
-                g_list_index(s->simpoint_info.cpt_instructions, iterator->data);
+//     if (s->nutshell_args.checkpoint_mode == SimpointCheckpointing) {
+// //        g_list_foreach(s->simpoint_info.cpt_instructions, prepare_output_path,
+// //                       base_output_path);
+//         GList *iterator = NULL;
+//         for (iterator = s->simpoint_info.cpt_instructions; iterator; iterator = iterator->next) {
+//             GString *checkpoint_path = g_string_new(NULL);
+//             gint data_position =
+//                 g_list_index(s->simpoint_info.cpt_instructions, iterator->data);
 
-            g_string_printf(
-                checkpoint_path, "%s/%d/_ %d _%s.gz", (char *)base_output_path,
-                GPOINTER_TO_INT(iterator->data),
-                GPOINTER_TO_INT(iterator->data),
-                ((GString *)(g_list_nth(s->simpoint_info.weights, data_position)->data))
-                    ->str);
-            info_report("Serializer initfinish");
-            // base_path/cpt_instruction_limit/_CptInstructionLimit_weights.gz
-            info_report("Checkpoint path: %s", checkpoint_path->str);
+//             g_string_printf(
+//                 checkpoint_path, "%s/%d/_ %d _%s.gz", (char *)base_output_path,
+//                 GPOINTER_TO_INT(iterator->data),
+//                 GPOINTER_TO_INT(iterator->data),
+//                 ((GString *)(g_list_nth(s->simpoint_info.weights, data_position)->data))
+//                     ->str);
+//             info_report("Serializer initfinish");
+//             // base_path/cpt_instruction_limit/_CptInstructionLimit_weights.gz
+//             info_report("Checkpoint path: %s", checkpoint_path->str);
 
-            s->path_manager.checkpoint_path_list =
-                g_list_append(s->path_manager.checkpoint_path_list, checkpoint_path);
-        }
+//             s->path_manager.checkpoint_path_list =
+//                 g_list_append(s->path_manager.checkpoint_path_list, checkpoint_path);
+//         }
 
-        s->path_manager.checkpoint_path_list =
-            g_list_sort(s->path_manager.checkpoint_path_list, g_compare_path);
+//         s->path_manager.checkpoint_path_list =
+//             g_list_sort(s->path_manager.checkpoint_path_list, g_compare_path);
 
-        s->simpoint_info.cpt_instructions =
-            g_list_sort(s->simpoint_info.cpt_instructions, g_compare_instrs);
+//         s->simpoint_info.cpt_instructions =
+//             g_list_sort(s->simpoint_info.cpt_instructions, g_compare_instrs);
 
-        g_list_foreach(s->path_manager.checkpoint_path_list, replace_space,
-                       NULL);
+//         g_list_foreach(s->path_manager.checkpoint_path_list, replace_space,
+//                        NULL);
 
-        g_list_foreach(s->path_manager.checkpoint_path_list, check_path, NULL);
-        g_list_foreach(s->simpoint_info.cpt_instructions, check_instrs, NULL);
-    } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing || s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint) {
-        s->path_manager.uniform_path = g_string_new(base_output_path);
-        g_string_printf(s->path_manager.uniform_path, "%s/%s", base_output_path,
-                        s->nutshell_args.workload_name->str);
-        info_report("prepare for checkpoint %s\n",
-                    s->path_manager.uniform_path->str);
-    } else{
-        error_report("Checkpoint mode just support SimpointCheckpoint and "
-                     "UniformCheckpoint");
-        exit(1);
-    }
-}
+//         g_list_foreach(s->path_manager.checkpoint_path_list, check_path, NULL);
+//         g_list_foreach(s->simpoint_info.cpt_instructions, check_instrs, NULL);
+//     } else if (s->nutshell_args.checkpoint_mode == UniformCheckpointing || s->nutshell_args.checkpoint_mode == SyncUniformCheckpoint) {
+//         s->path_manager.uniform_path = g_string_new(base_output_path);
+//         g_string_printf(s->path_manager.uniform_path, "%s/%s", base_output_path,
+//                         s->nutshell_args.workload_name->str);
+//         info_report("prepare for checkpoint %s\n",
+//                     s->path_manager.uniform_path->str);
+//     } else{
+//         error_report("Checkpoint mode just support SimpointCheckpoint and "
+//                      "UniformCheckpoint");
+//         exit(1);
+//     }
+// }
 
-static void simpoint_init(MachineState *machine)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(machine);
-    // As long as it is not NoCheckpoint mode, we need to initialize the output
-    // path manager
-    if (ns->nutshell_args.checkpoint_mode != NoCheckpoint) {
-        init_path_manager(machine);
-    }
-}
+// static void simpoint_init(MachineState *machine)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(machine);
+//     // As long as it is not NoCheckpoint mode, we need to initialize the output
+//     // path manager
+//     if (ns->nutshell_args.checkpoint_mode != NoCheckpoint) {
+//         init_path_manager(machine);
+//     }
+// }
 
 static void nutshell_load_firmware(MachineState *machine)
 {
@@ -402,22 +402,17 @@ static void nutshell_load_firmware(MachineState *machine)
     uint64_t kernel_entry = 0;
     uint64_t kernel_start_addr = 0;
 
-    /* Find firmware */
-    //    firmware_name = riscv_find_firmware(machine->firmware,
-    //                        riscv_default_firmware_name(&s->soc[0]));
 
-    //    if (firmware_name) {
-
-    if (s->nutshell_args.checkpoint) {
-        info_report("Load checkpoint: %s", s->nutshell_args.checkpoint);
-        g_assert(load_checkpoint(machine, s->nutshell_args.checkpoint));
-        if (s->nutshell_args.gcpt_restore) {
-            info_report("Load gcpt_restore: %s", s->nutshell_args.gcpt_restore);
-            g_assert(load_gcpt_restore(machine, s->nutshell_args.gcpt_restore));
-        }
-        // load checkpoint donot need to load bios or kernel
-        goto prepare_start;
-    }
+    // if (s->nutshell_args.checkpoint) {
+    //     info_report("Load checkpoint: %s", s->nutshell_args.checkpoint);
+    //     g_assert(load_checkpoint(machine, s->nutshell_args.checkpoint));
+    //     if (s->nutshell_args.gcpt_restore) {
+    //         info_report("Load gcpt_restore: %s", s->nutshell_args.gcpt_restore);
+    //         g_assert(load_gcpt_restore(machine, s->nutshell_args.gcpt_restore));
+    //     }
+    //     // load checkpoint donot need to load bios or kernel
+    //     goto prepare_start;
+    // }
 
     firmware_end_addr = riscv_find_and_load_firmware(
         machine, riscv_default_firmware_name(&s->soc[0]),
@@ -436,7 +431,7 @@ static void nutshell_load_firmware(MachineState *machine)
         info_report("%s %lx", machine->kernel_filename, kernel_entry);
     }
 
-prepare_start:
+// prepare_start:
     /* load the reset vector */
     riscv_setup_rom_reset_vec(machine, &s->soc[0], memmap[NUTSHELL_DRAM].base,
                               memmap[NUTSHELL_MROM].base, memmap[NUTSHELL_MROM].size,
@@ -472,7 +467,7 @@ static void nutshell_machine_init(MachineState *machine)
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
     MemoryRegion *nutshell_memory = g_new(MemoryRegion, 1);
-    MemoryRegion *nutshell_gcpt = g_new(MemoryRegion, 1);
+    // MemoryRegion *nutshell_gcpt = g_new(MemoryRegion, 1);
     DeviceState *dev;
     char *soc_name;
     int i, base_hartid, hart_count;
@@ -540,16 +535,11 @@ static void nutshell_machine_init(MachineState *machine)
                                 nutshell_memory);
 
     // gcpt device
-    s->gcpt_memory = g_malloc(nutshell_memmap[NUTSHELL_GCPT].size);
-    memory_region_init_ram_ptr(nutshell_gcpt, NULL, "riscv.nutshell.gcpt",
-                               nutshell_memmap[NUTSHELL_GCPT].size, s->gcpt_memory);
-
-    memory_region_add_subregion(system_memory, memmap[NUTSHELL_GCPT].base,
-                                nutshell_gcpt);
-    //
-    //    /* register system main memory (actual RAM) */
-    //    memory_region_add_subregion(system_memory, memmap[NUTSHELL_DRAM].base,
-    //        machine->ram);
+    // s->gcpt_memory = g_malloc(nutshell_memmap[NUTSHELL_GCPT].size);
+    // memory_region_init_ram_ptr(nutshell_gcpt, NULL, "riscv.nutshell.gcpt",
+    //                            nutshell_memmap[NUTSHELL_GCPT].size, s->gcpt_memory);
+    // memory_region_add_subregion(system_memory, memmap[NUTSHELL_GCPT].base,
+    //                             nutshell_gcpt);
 
     // uartlite
     dev = qdev_new(TYPE_XILINX_UARTLITE);
@@ -562,104 +552,104 @@ static void nutshell_machine_init(MachineState *machine)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
                        qdev_get_gpio_in(DEVICE(s->irqchip[0]), UART0_IRQ));
 
-    simpoint_init(machine);
+    // simpoint_init(machine);
     nutshell_load_firmware(machine);
-    multicore_checkpoint_init(machine);
+    // multicore_checkpoint_init(machine);
 }
 
 static void nutshell_machine_instance_init(Object *obj) {}
 
 
-static void nutshell_machine_set_checkpoint_path(Object *obj, const char *value,
-                                             Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.checkpoint = g_strdup(value);
-}
+// static void nutshell_machine_set_checkpoint_path(Object *obj, const char *value,
+//                                              Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.checkpoint = g_strdup(value);
+// }
 
-static void nutshell_machine_set_gcpt_restore_path(Object *obj, const char *value,
-                                               Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.gcpt_restore = g_strdup(value);
-}
+// static void nutshell_machine_set_gcpt_restore_path(Object *obj, const char *value,
+//                                                Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.gcpt_restore = g_strdup(value);
+// }
 
-static void nutshell_machine_set_config_name(Object *obj, const char *value,
-                                         Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.config_name = g_string_new(value);
-}
+// static void nutshell_machine_set_config_name(Object *obj, const char *value,
+//                                          Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.config_name = g_string_new(value);
+// }
 
-static void nutshell_machine_set_output_base_dir(Object *obj, const char *value,
-                                             Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.base_dir = g_string_new(value);
-}
+// static void nutshell_machine_set_output_base_dir(Object *obj, const char *value,
+//                                              Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.base_dir = g_string_new(value);
+// }
 
-static void nutshell_machine_set_sync_interval(Object *obj, const char *value,
-                                           Error **errp)
-{
-    NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-    ms->nutshell_args.sync_interval = atol(value);
-}
+// static void nutshell_machine_set_sync_interval(Object *obj, const char *value,
+//                                            Error **errp)
+// {
+//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
+//     ms->nutshell_args.sync_interval = atol(value);
+// }
 
-static void nutshell_machine_set_cpt_interval(Object *obj, const char *value,
-                                          Error **errp)
-{
-    NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-    ms->nutshell_args.cpt_interval = atol(value);
-}
+// static void nutshell_machine_set_cpt_interval(Object *obj, const char *value,
+//                                           Error **errp)
+// {
+//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
+//     ms->nutshell_args.cpt_interval = atol(value);
+// }
 
-static void nutshell_machine_set_warmup_interval(Object *obj, const char *value,
-                                             Error **errp)
-{
-    NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-    ms->nutshell_args.warmup_interval = atol(value);
-}
+// static void nutshell_machine_set_warmup_interval(Object *obj, const char *value,
+//                                              Error **errp)
+// {
+//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
+//     ms->nutshell_args.warmup_interval = atol(value);
+// }
 
-static void nutshell_machine_set_simpoint_path(Object *obj, const char *value,
-                                           Error **errp)
-{
-    NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-    ms->nutshell_args.simpoint_path = g_strdup(value);
-}
+// static void nutshell_machine_set_simpoint_path(Object *obj, const char *value,
+//                                            Error **errp)
+// {
+//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
+//     ms->nutshell_args.simpoint_path = g_strdup(value);
+// }
 
-static void nutshell_machine_set_workload_name(Object *obj, const char *value,
-                                           Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.workload_name = g_string_new(value);
-}
+// static void nutshell_machine_set_workload_name(Object *obj, const char *value,
+//                                            Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.workload_name = g_string_new(value);
+// }
 
-static void nutshell_machine_set_skip_boot(Object *obj, bool value,
-                                           Error **errp)
-{
-    NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
-    ns->nutshell_args.skip_boot = value;
-}
+// static void nutshell_machine_set_skip_boot(Object *obj, bool value,
+//                                            Error **errp)
+// {
+//     NUTSHELLState *ns = NUTSHELL_MACHINE(obj);
+//     ns->nutshell_args.skip_boot = value;
+// }
 
-static void nutshell_machine_set_checkpoint_mode(Object *obj, const char *value,
-                                             Error **errp)
-{
-    NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
-    if (strcmp(value, "NoCheckpoint") == 0) {
-        ms->nutshell_args.checkpoint_mode = NoCheckpoint;
-    } else if (strcmp(value, "SimpointCheckpoint") == 0) {
-        ms->nutshell_args.checkpoint_mode = SimpointCheckpointing;
-    } else if (strcmp(value, "UniformCheckpoint") == 0) {
-        ms->nutshell_args.checkpoint_mode = UniformCheckpointing;
-    } else if (strcmp(value, "SyncUniformCheckpoint") == 0) {
-        ms->nutshell_args.checkpoint_mode = SyncUniformCheckpoint;
-    } else {
-        ms->nutshell_args.checkpoint_mode = NoCheckpoint;
-        error_setg(errp, "Invalid checkpoint mode");
-        error_append_hint(
-            errp, "Valid values are Nocheckpoint, SimpointCheckpoint, and "
-                  "UniformCheckpoint.\n");
-    }
-}
+// static void nutshell_machine_set_checkpoint_mode(Object *obj, const char *value,
+//                                              Error **errp)
+// {
+//     NUTSHELLState *ms = NUTSHELL_MACHINE(obj);
+//     if (strcmp(value, "NoCheckpoint") == 0) {
+//         ms->nutshell_args.checkpoint_mode = NoCheckpoint;
+//     } else if (strcmp(value, "SimpointCheckpoint") == 0) {
+//         ms->nutshell_args.checkpoint_mode = SimpointCheckpointing;
+//     } else if (strcmp(value, "UniformCheckpoint") == 0) {
+//         ms->nutshell_args.checkpoint_mode = UniformCheckpointing;
+//     } else if (strcmp(value, "SyncUniformCheckpoint") == 0) {
+//         ms->nutshell_args.checkpoint_mode = SyncUniformCheckpoint;
+//     } else {
+//         ms->nutshell_args.checkpoint_mode = NoCheckpoint;
+//         error_setg(errp, "Invalid checkpoint mode");
+//         error_append_hint(
+//             errp, "Valid values are Nocheckpoint, SimpointCheckpoint, and "
+//                   "UniformCheckpoint.\n");
+//     }
+// }
 
 static void nutshell_machine_class_init(ObjectClass *oc, void *data)
 {
@@ -679,28 +669,28 @@ static void nutshell_machine_class_init(ObjectClass *oc, void *data)
     mc->cpu_cluster_has_numa_boundary = true;
     mc->default_ram_id = "riscv.nutshell.ram";
 
-    object_class_property_add_str(oc, "checkpoint", NULL,
-                                  nutshell_machine_set_checkpoint_path);
-    object_class_property_add_str(oc, "gcpt-restore", NULL,
-                                  nutshell_machine_set_gcpt_restore_path);
-    object_class_property_add_str(oc, "config-name", NULL,
-                                  nutshell_machine_set_config_name);
-    object_class_property_add_str(oc, "output-base-dir", NULL,
-                                  nutshell_machine_set_output_base_dir);
-    object_class_property_add_str(oc, "sync-interval", NULL,
-                                  nutshell_machine_set_sync_interval);
-    object_class_property_add_str(oc, "cpt-interval", NULL,
-                                  nutshell_machine_set_cpt_interval);
-    object_class_property_add_str(oc, "warmup-interval", NULL,
-                                  nutshell_machine_set_warmup_interval);
-    object_class_property_add_str(oc, "simpoint-path", NULL,
-                                  nutshell_machine_set_simpoint_path);
-    object_class_property_add_str(oc, "workload", NULL,
-                                  nutshell_machine_set_workload_name);
-    object_class_property_add_str(oc, "checkpoint-mode", NULL,
-                                  nutshell_machine_set_checkpoint_mode);
-    object_class_property_add_bool(oc, "skip-boot", NULL,
-                                  nutshell_machine_set_skip_boot);
+    // object_class_property_add_str(oc, "checkpoint", NULL,
+    //                               nutshell_machine_set_checkpoint_path);
+    // object_class_property_add_str(oc, "gcpt-restore", NULL,
+    //                               nutshell_machine_set_gcpt_restore_path);
+    // object_class_property_add_str(oc, "config-name", NULL,
+    //                               nutshell_machine_set_config_name);
+    // object_class_property_add_str(oc, "output-base-dir", NULL,
+    //                               nutshell_machine_set_output_base_dir);
+    // object_class_property_add_str(oc, "sync-interval", NULL,
+    //                               nutshell_machine_set_sync_interval);
+    // object_class_property_add_str(oc, "cpt-interval", NULL,
+    //                               nutshell_machine_set_cpt_interval);
+    // object_class_property_add_str(oc, "warmup-interval", NULL,
+    //                               nutshell_machine_set_warmup_interval);
+    // object_class_property_add_str(oc, "simpoint-path", NULL,
+    //                               nutshell_machine_set_simpoint_path);
+    // object_class_property_add_str(oc, "workload", NULL,
+    //                               nutshell_machine_set_workload_name);
+    // object_class_property_add_str(oc, "checkpoint-mode", NULL,
+    //                               nutshell_machine_set_checkpoint_mode);
+    // object_class_property_add_bool(oc, "skip-boot", NULL,
+    //                               nutshell_machine_set_skip_boot);
 }
 
 static const TypeInfo nutshell_machine_typeinfo = {
