@@ -35,7 +35,7 @@ typedef struct ShaktiCSoCState {
     RISCVHartArrayState cpus;
     DeviceState *plic;
     ShaktiUartState uart;
-    MemoryRegion rom;
+    struct MemoryRegion rom;
 
 } ShaktiCSoCState;
 

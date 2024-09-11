@@ -14,6 +14,8 @@ refer run.sh
 在加入uart之前，kconfig中select SERIAL 必须加，否则报错
 
 ## add uart pflash plic
+大部分偷的virt + shakti_c, 当前build能过，还没测, run直接报错，摆了明天修,
+使用 https://toolchains.bootlin.com/ 进行测试, 测试代码在lowerboot dir.
 
 
 
