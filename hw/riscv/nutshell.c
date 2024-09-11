@@ -42,6 +42,9 @@
 #include "sysemu/arch_init.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/sysemu.h"
+#include "chardev/char-serial.h"
+#include "hw/intc/riscv_aclint.h"
+#include "hw/intc/sifive_plic.h"
 
 // refer src/main/scala/sim/SimMMIO.scala
 // refer src/main/scala/system/NutShell.scala
@@ -51,6 +54,9 @@
 static const MemMapEntry memmap[] = {
     [NUTSHELL_MROM] = {0x00000000, 0x20000},
     [NUTSHELL_SRAM] = {0x00020000, 0xe0000},
+    [NUTSHELL_UART0] = {0x10000000, 0x100},
+    [NUTSHELL_UART1] = {0x10001000, 0x100},
+    [NUTSHELL_UART2] = {0x10002000, 0x100},
     [NUTSHELL_CLINT] = {0x38000000, 0x00010000},
     [NUTSHELL_PLIC] = {0x3c000000, 0x04000000},
     [NUTSHELL_FLASH] = {0x40000000, 0x1000},
@@ -126,7 +132,8 @@ static void nutshell_machine_init(MachineState *machine) {
   MemoryRegion *main_mem = g_new(MemoryRegion, 1);
   MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
   MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
-
+  DeviceState *mmio_plic=NULL;
+  char *plic_hart_config;
   int base_hartid, hart_count;
   char *soc_name;
 
@@ -165,6 +172,21 @@ static void nutshell_machine_init(MachineState *machine) {
     object_property_set_int(OBJECT(&s->soc[i]), "num-harts", hart_count,
                             &error_abort);
     sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_abort);
+
+        /* Per-socket PLIC hart topology configuration string */
+    plic_hart_config = riscv_plic_hart_config_string(hart_count);
+
+    s->plic[i] = sifive_plic_create(memmap[NUTSHELL_PLIC].base,
+        plic_hart_config, hart_count, 0,
+        PLIC_NUM_SOURCES,
+        PLIC_NUM_PRIORITIES,
+        PLIC_PRIORITY_BASE,
+        PLIC_PENDING_BASE,
+        PLIC_ENABLE_BASE,
+        PLIC_ENABLE_STRIDE,
+        PLIC_CONTEXT_BASE,
+        PLIC_CONTEXT_STRIDE,
+        memmap[NUTSHELL_PLIC].size);
   }
 
   memory_region_init_ram(main_mem, NULL, "riscv_nutshell_board.dram",
@@ -181,6 +203,22 @@ static void nutshell_machine_init(MachineState *machine) {
                          memmap[NUTSHELL_MROM].size, &error_fatal);
   memory_region_add_subregion(system_memory, memmap[NUTSHELL_MROM].base,
                               mask_rom);
+
+  // add uart, qdev_get_gpio_in函数用来配置串口中断信号
+  serial_mm_init(system_memory, memmap[NUTSHELL_UART0].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART0_IRQ), 399193, serial_hd(0), DEVICE_LITTLE_ENDIAN);
+  serial_mm_init(system_memory, memmap[NUTSHELL_UART1].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART1_IRQ), 399193, serial_hd(1), DEVICE_LITTLE_ENDIAN);
+  serial_mm_init(system_memory, memmap[NUTSHELL_UART2].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART2_IRQ), 399193, serial_hd(2), DEVICE_LITTLE_ENDIAN);
+
+  riscv_aclint_swi_create(memmap[NUTSHELL_CLINT].base,
+        0, 1, false);
+  riscv_aclint_mtimer_create(memmap[NUTSHELL_CLINT].base +RISCV_ACLINT_SWI_SIZE,
+        RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, 1,
+        RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
+        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
+
+  
+
+
 
   nutshell_setup_rom_reset_vec(machine, &s->soc[0], memmap[NUTSHELL_MROM].base,
                                memmap[NUTSHELL_MROM].base,

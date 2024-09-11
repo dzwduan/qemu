@@ -5,19 +5,19 @@
 #include "hw/cpu/cluster.h"
 #include "hw/riscv/riscv_hart.h"
 #include "hw/sysbus.h"
+#include "qemu/typedefs.h"
 #include "stdint.h"
 
 #define NUTSHELL_CPUS_MAX 8
 #define NUTSHELL_CPUS_MIN 1
 #define NUTSHELL_SOCKETS_MAX 8
 
-// #define TYPE_RISCV_NUTSHELL_SOC "riscv.nutshell.soc"
+
 #define TYPE_RISCV_NUTSHELL_MACHINE MACHINE_TYPE_NAME("nutshell")
 typedef struct NUTSHELLState NUTSHELLState;
-#define RISCV_NUTSHELL_MACHINE(obj)                                            \
+#define RISCV_NUTSHELL_MACHINE(obj)     \
   OBJECT_CHECK(NUTSHELLState, (obj), TYPE_RISCV_NUTSHELL_MACHINE)
-// DECLARE_INSTANCE_CHECKER(NUTSHELLState, RISCV_NUTSHELL_MACHINE,
-//                          TYPE_RISCV_NUTSHELL_MACHINE)
+
 
 struct NUTSHELLState {
   /*< private >*/
@@ -26,10 +26,13 @@ struct NUTSHELLState {
   /*< public >*/
   // CPUClusterState c_cluster;
   RISCVHartArrayState soc[NUTSHELL_SOCKETS_MAX];
+  DeviceState *plic[NUTSHELL_SOCKETS_MAX];
 };
 
 enum {
   UART0_IRQ = 10,
+  UART1_IRQ = 11,
+  UART2_IRQ = 12,
   RTC_IRQ = 11,
   VIRTIO_IRQ = 1, /* 1 to 8 */
   VIRTIO_COUNT = 8,
@@ -48,7 +51,10 @@ enum {
   NUTSHELL_DMA,
   NUTSHELL_DRAM,
   NUTSHELL_MROM,
-  NUTSHELL_SRAM
+  NUTSHELL_SRAM,
+  NUTSHELL_UART0,
+  NUTSHELL_UART1,
+  NUTSHELL_UART2
 };
 
 /*
@@ -56,6 +62,7 @@ enum {
  * Freedom E310 G000 supports 51 interrupt sources. We use the value
  * of G002 and G003, so it is 53 (including interrupt source 0).
  */
+#define PLIC_HART_CONFIG "MS"
 #define PLIC_NUM_SOURCES 53
 #define PLIC_NUM_PRIORITIES 7
 #define PLIC_PRIORITY_BASE 0x00
