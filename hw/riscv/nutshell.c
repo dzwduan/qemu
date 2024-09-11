@@ -1,14 +1,15 @@
 /*
- * QEMU RISC-V Spike Board
- *
+ * QEMU RISC-V Nutshell Board
+ * Copyright (c) 
  * Copyright (c) 2016-2017 Sagar Karandikar, sagark@eecs.berkeley.edu
  * Copyright (c) 2017-2018 SiFive, Inc.
  *
  * This provides a RISC-V Board with the following devices:
  *
- * 0) HTIF Console and Poweroff
- * 1) CLINT (Timer and IPI)
- *
+ * 0) 
+ * 1) 
+ * 2)
+ * 
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
  * version 2 or later, as published by the Free Software Foundation.
@@ -22,66 +23,40 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "hw/riscv/nutshell.h"
-#include "hw/boards.h"
-#include "hw/cpu/cluster.h"
-#include "hw/riscv/riscv_hart.h"
-#include "hw/sysbus.h"
-#include "qapi/error.h"
-#include "qemu/error-report.h"
 #include "qemu/osdep.h"
+#include "qemu/error-report.h"
+#include "qapi/error.h"
+#include "hw/boards.h"
+#include "hw/loader.h"
+#include "hw/sysbus.h"
 #include "qemu/typedefs.h"
 #include "qemu/units.h"
 #include "qom/object.h"
+#include "target/riscv/cpu.h"
+#include "hw/riscv/riscv_hart.h"
+#include "hw/riscv/nutshell.h"
+#include "hw/riscv/boot.h"
+#include "hw/riscv/numa.h"
+#include "hw/intc/riscv_aclint.h"
+#include "chardev/char.h"
+#include "sysemu/device_tree.h"
+#include "sysemu/sysemu.h"
+
+#include "hw/misc/unimp.h"
+#include "hw/char/xilinx_uartlite.h"
+#include "hw/intc/riscv_aclint.h"
+#include "hw/intc/sifive_plic.h"
 #include <libfdt.h>
 #include <unistd.h>
-#include <zlib.h>
 #include <zstd.h>
-#include <glib.h>
+#include <zlib.h>
 
-enum {
-  UART0_IRQ = 10,
-  RTC_IRQ = 11,
-  VIRTIO_IRQ = 1, /* 1 to 8 */
-  VIRTIO_COUNT = 8,
-  PCIE_IRQ = 0x20,            /* 32 to 35 */
-  VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
-};
-
-enum {
-  NUTSHELL_VGA,
-  NUTSHELL_VMEM,
-  NUTSHELL_PLIC,
-  NUTSHELL_CLINT,
-  NUTSHELL_UARTLITE,
-  NUTSHELL_FLASH,
-  NUTSHELL_SD,
-  NUTSHELL_DMA,
-  // NUTSHELL_GCPT,
-  NUTSHELL_DRAM,
-  NUTSHELL_MROM,
-  NUTSHELL_SRAM
-};
-
-/*
- * Freedom E310 G002 and G003 supports 52 interrupt sources while
- * Freedom E310 G000 supports 51 interrupt sources. We use the value
- * of G002 and G003, so it is 53 (including interrupt source 0).
- */
-#define PLIC_NUM_SOURCES 53
-#define PLIC_NUM_PRIORITIES 7
-#define PLIC_PRIORITY_BASE 0x00
-#define PLIC_PENDING_BASE 0x1000
-#define PLIC_ENABLE_BASE 0x2000
-#define PLIC_ENABLE_STRIDE 0x80
-#define PLIC_CONTEXT_BASE 0x200000
-#define PLIC_CONTEXT_STRIDE 0x1000
 
 // refer src/main/scala/sim/SimMMIO.scala
 // refer src/main/scala/system/NutShell.scala
 // https://github.com/OpenXiangShan/NEMU/blob/master/configs/riscv64-nutshell_defconfig
 //TODO: 额外加的mrom sram
-static const MemMapEntry nutshell_memmap[] = {
+static const MemMapEntry memmap[] = {
     [NUTSHELL_MROM]     = {0x00000000, 0x20000},
     [NUTSHELL_SRAM]     = {0x00020000, 0xe0000 },
     [NUTSHELL_CLINT]    = {0x38000000, 0x00010000},
@@ -94,10 +69,10 @@ static const MemMapEntry nutshell_memmap[] = {
 };
 
 static void nutshell_cpu_create(MachineState *machine) {
-  NUTSHELLState *s = NUTSHELL_MACHINE(machine);
+  NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
   object_initialize_child(OBJECT(machine), "c-cluster", &s->c_cluster,
                           TYPE_CPU_CLUSTER);
-
+  qdev_prop_set_uint32(DEVICE(&s->c_cluster), "cluster-id", 0);
   object_initialize_child(OBJECT(machine), "c-cpus", &s->c_cpus,
                           TYPE_RISCV_HART_ARRAY);
 
@@ -107,42 +82,12 @@ static void nutshell_cpu_create(MachineState *machine) {
   object_property_set_int(OBJECT(&s->c_cpus), "num-harts", NUTSHELL_CPUS_MAX,
                           &error_abort);
   object_property_set_int(OBJECT(&s->c_cpus), "resetvec",
-                          nutshell_memmap[NUTSHELL_FLASH].base, &error_abort);
+                          memmap[NUTSHELL_FLASH].base, &error_abort);
   sysbus_realize(SYS_BUS_DEVICE(&s->c_cpus), &error_fatal);
+  qdev_realize(DEVICE(&s->c_cluster), NULL, &error_abort);
 }
 
-extern MemoryRegion *get_system_memory(void);
-static void nutshell_memory_create(MachineState *machine) {
-  MemoryRegion * system_memory = get_system_memory();
-  NUTSHELLState * s = NUTSHELL_MACHINE(machine);
-  MemoryRegion *main_mem = g_new(MemoryRegion, 1);
-  MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
-  MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
-
-  memory_region_init_ram(main_mem, NULL, "riscv_nutshell_board.dram",
-                           machine->ram_size, &error_fatal);
-  memory_region_add_subregion(system_memory, 
-                                nutshell_memmap[NUTSHELL_DRAM].base, main_mem);
-
-  memory_region_init_ram(sram_mem, NULL, "riscv_nutshell_board.sram",
-                           nutshell_memmap[NUTSHELL_SRAM].size, &error_fatal);
-  memory_region_add_subregion(system_memory, 
-                                nutshell_memmap[NUTSHELL_SRAM].base, sram_mem);
-
-  memory_region_init_rom(mask_rom, NULL, "riscv_nutshell_board.mrom",
-                           nutshell_memmap[NUTSHELL_MROM].size, &error_fatal);
-  memory_region_add_subregion(system_memory, 
-                                nutshell_memmap[NUTSHELL_MROM].base, mask_rom);
-
-  nutshell_setup_rom_reset_vec(machine, &s->c_cpus,
-                               nutshell_memmap[NUTSHELL_FLASH].base,
-                               nutshell_memmap[NUTSHELL_MROM].base,
-                               nutshell_memmap[NUTSHELL_MROM].size, 
-                               0, 0);
-                        
-}
-
-void nutshell_setup_rom_reset_vec(MachineState *machine,
+static void nutshell_setup_rom_reset_vec(MachineState *machine,
                                   RISCVHartArrayState *harts, hwaddr start_addr,
                                   hwaddr rom_base, hwaddr rom_size,
                                   uint64_t kernel_entry,
@@ -192,6 +137,38 @@ void nutshell_setup_rom_reset_vec(MachineState *machine,
   }
 }
 
+
+static void nutshell_memory_create(MachineState *machine) {
+
+  NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
+  MemoryRegion * system_memory = get_system_memory();
+  MemoryRegion *main_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
+
+  memory_region_init_ram(main_mem, NULL, "riscv_nutshell_board.dram",
+                           machine->ram_size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                memmap[NUTSHELL_DRAM].base, main_mem);
+
+  memory_region_init_ram(sram_mem, NULL, "riscv_nutshell_board.sram",
+                           memmap[NUTSHELL_SRAM].size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                memmap[NUTSHELL_SRAM].base, sram_mem);
+
+  memory_region_init_rom(mask_rom, NULL, "riscv_nutshell_board.mrom",
+                           memmap[NUTSHELL_MROM].size, &error_fatal);
+  memory_region_add_subregion(system_memory, 
+                                memmap[NUTSHELL_MROM].base, mask_rom);
+
+  nutshell_setup_rom_reset_vec(machine, &s->c_cpus,
+                               memmap[NUTSHELL_FLASH].base,
+                               memmap[NUTSHELL_MROM].base,
+                               memmap[NUTSHELL_MROM].size, 
+                               0, 0);   
+}
+
+
 static void nutshell_machine_init(MachineState *machine) {
   nutshell_cpu_create(machine);
   nutshell_memory_create(machine);
@@ -203,12 +180,14 @@ static void nutshell_machine_class_init(ObjectClass *oc, void *data) {
   mc->desc = "RISC-V Nutshell board";
   mc->init = nutshell_machine_init;
   mc->max_cpus = NUTSHELL_CPUS_MAX;
+  mc->min_cpus = NUTSHELL_CPUS_MIN;
+  mc->default_cpu_type = TYPE_RISCV_CPU_NUTSHELL;
 }
 
 static void nutshell_machine_instance_init(Object *obj) {}
 
 static const TypeInfo nutshell_machine_typeinfo = {
-    .name = MACHINE_TYPE_NAME("nutshell"),
+    .name = TYPE_RISCV_NUTSHELL_MACHINE,
     .parent = TYPE_MACHINE,
     .class_init = nutshell_machine_class_init,
     .instance_init = nutshell_machine_instance_init,

@@ -1,0 +1,1 @@
+gdb ./out/bin/qemu-system-riscv64 -n -x .gdbinit.nutshell

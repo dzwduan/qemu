@@ -1132,6 +1132,7 @@ static void machine_class_base_init(ObjectClass *oc, void *data)
 
     if (!object_class_is_abstract(oc)) {
         const char *cname = object_class_get_name(oc);
+        // printf("%s\n", cname);
         assert(g_str_has_suffix(cname, TYPE_MACHINE_SUFFIX));
         mc->name = g_strndup(cname,
                             strlen(cname) - strlen(TYPE_MACHINE_SUFFIX));
