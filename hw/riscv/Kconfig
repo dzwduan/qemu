@@ -71,6 +71,9 @@ config NUTSHELL
     default y
     depends on RISCV64
     select SERIAL
+    select RISCV_ACLINT
+    select SIFIVE_PLIC
+    select PFLASH_CFI01
     select UNIMP
 
 config SIFIVE_E

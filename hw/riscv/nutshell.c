@@ -23,7 +23,9 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
 #include "qemu/osdep.h"
+#include "qemu/typedefs.h"
 #include "qemu/units.h"
 #include "qemu/log.h"
 #include "qemu/error-report.h"
@@ -45,6 +47,7 @@
 #include "chardev/char-serial.h"
 #include "hw/intc/riscv_aclint.h"
 #include "hw/intc/sifive_plic.h"
+#include "hw/block/flash.h"
 
 // refer src/main/scala/sim/SimMMIO.scala
 // refer src/main/scala/system/NutShell.scala
@@ -65,16 +68,6 @@ static const MemMapEntry memmap[] = {
     [NUTSHELL_UARTLITE] = {0x40600000, 0x10},
     [NUTSHELL_DRAM] = {0x80000000, 0x0}};
 
-// static void nutshell_cpu_create(MachineState *machine) {
-//   NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
-
-//   // only cpu-type, hardid-base, num-harts, bus
-//   object_property_set_str(OBJECT(&s->c_cpus), "cpu-type", machine->cpu_type,
-//                           &error_abort);
-//   object_property_set_int(OBJECT(&s->c_cpus), "hartid-base", 0, &error_abort);
-//   object_property_set_int(OBJECT(&s->c_cpus), "num-harts", 1, &error_abort);
-//   sysbus_realize(SYS_BUS_DEVICE(&s->c_cpus), &error_fatal);
-// }
 
 static void nutshell_setup_rom_reset_vec(MachineState *machine,
                                          RISCVHartArrayState *harts,
@@ -126,14 +119,86 @@ static void nutshell_setup_rom_reset_vec(MachineState *machine,
   }
 }
 
-static void nutshell_machine_init(MachineState *machine) {
+static void nutshell_flash_create(MachineState *machine)
+{ 
+    MemoryRegion *system_memory = get_system_memory();
+    NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
+    uint64_t flash_sector_size = 256 * KiB;
+    DeviceState *dev = qdev_new(TYPE_PFLASH_CFI01);
+
+    qdev_prop_set_uint64(dev, "sector-length", flash_sector_size);
+    qdev_prop_set_uint8(dev, "width", 4);
+    qdev_prop_set_uint8(dev, "device-width", 2);
+    qdev_prop_set_bit(dev, "big-endian", false);
+    qdev_prop_set_uint16(dev, "id0", 0x89);
+    qdev_prop_set_uint16(dev, "id1", 0x18);
+    qdev_prop_set_uint16(dev, "id2", 0x00);
+    qdev_prop_set_uint16(dev, "id3", 0x00);
+    qdev_prop_set_string(dev, "name", "nutshell.flash0");
+    object_property_add_child(OBJECT(s), "nutshell.flash0", OBJECT(dev));
+    object_property_add_alias(OBJECT(s), "pflash0",
+                              OBJECT(dev), "drive");
+    s->flash = PFLASH_CFI01(dev);
+    pflash_cfi01_legacy_drive(s->flash, drive_get(IF_PFLASH, 0, 0));
+
+    assert(QEMU_IS_ALIGNED(memmap[NUTSHELL_FLASH].size, 
+                                flash_sector_size));
+    assert(memmap[NUTSHELL_FLASH].size/flash_sector_size <= UINT32_MAX);
+    qdev_prop_set_uint32(dev, "num-blocks", 
+                    memmap[NUTSHELL_FLASH].size / flash_sector_size);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    memory_region_add_subregion(system_memory, 
+                            memmap[NUTSHELL_FLASH].base,
+                            sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0));
+}
+
+static void nutshell_interrupt_controller_create(MachineState *machine) {
+    NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
+    char *plic_hart_config;
+
+    riscv_aclint_swi_create(
+        memmap[NUTSHELL_CLINT].base,
+        0, machine->smp.cpus, false);
+    riscv_aclint_mtimer_create(memmap[NUTSHELL_CLINT].base + RISCV_ACLINT_SWI_SIZE,
+        RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, machine->smp.cpus,
+        RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
+        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+
+    plic_hart_config = riscv_plic_hart_config_string(machine->smp.cpus);
+    s->plic = sifive_plic_create(
+        memmap[NUTSHELL_PLIC].base,
+        plic_hart_config,  machine->smp.cpus, 0,
+        PLIC_NUM_SOURCES,
+        PLIC_NUM_PRIORITIES,
+        PLIC_PRIORITY_BASE,
+        PLIC_PENDING_BASE,
+        PLIC_ENABLE_BASE,
+        PLIC_ENABLE_STRIDE,
+        PLIC_CONTEXT_BASE,
+        PLIC_CONTEXT_STRIDE,
+        memmap[NUTSHELL_PLIC].size);
+    g_free(plic_hart_config);
+}
+
+static void nutshell_serial_create(MachineState *machine)
+{    
+    MemoryRegion *system_memory = get_system_memory();
+    NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
+
+    serial_mm_init(system_memory, memmap[NUTSHELL_UART0].base,
+        0, qdev_get_gpio_in(DEVICE(s->plic), UART0_IRQ), 399193,
+        serial_hd(0), DEVICE_LITTLE_ENDIAN);
+    serial_mm_init(system_memory, memmap[NUTSHELL_UART1].base,
+        0, qdev_get_gpio_in(DEVICE(s->plic), UART1_IRQ), 399193,
+        serial_hd(1), DEVICE_LITTLE_ENDIAN);
+    serial_mm_init(system_memory, memmap[NUTSHELL_UART2].base,
+        0, qdev_get_gpio_in(DEVICE(s->plic), UART2_IRQ), 399193,
+        serial_hd(2), DEVICE_LITTLE_ENDIAN);
+}
+
+static void nutshell_cpu_create(MachineState *machine) {
   NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
-  MemoryRegion *system_memory = get_system_memory();
-  MemoryRegion *main_mem = g_new(MemoryRegion, 1);
-  MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
-  MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
-  DeviceState *mmio_plic=NULL;
-  char *plic_hart_config;
   int base_hartid, hart_count;
   char *soc_name;
 
@@ -143,6 +208,7 @@ static void nutshell_machine_init(MachineState *machine) {
     exit(1);
   }
 
+//TODO: change soc to cpus
   for (int i = 0; i < riscv_socket_count(machine); i++) {
     if (!riscv_socket_check_hartids(machine, i)) {
       error_report("discontinuous hartids in socket%d", i);
@@ -172,22 +238,15 @@ static void nutshell_machine_init(MachineState *machine) {
     object_property_set_int(OBJECT(&s->soc[i]), "num-harts", hart_count,
                             &error_abort);
     sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_abort);
-
-        /* Per-socket PLIC hart topology configuration string */
-    plic_hart_config = riscv_plic_hart_config_string(hart_count);
-
-    s->plic[i] = sifive_plic_create(memmap[NUTSHELL_PLIC].base,
-        plic_hart_config, hart_count, 0,
-        PLIC_NUM_SOURCES,
-        PLIC_NUM_PRIORITIES,
-        PLIC_PRIORITY_BASE,
-        PLIC_PENDING_BASE,
-        PLIC_ENABLE_BASE,
-        PLIC_ENABLE_STRIDE,
-        PLIC_CONTEXT_BASE,
-        PLIC_CONTEXT_STRIDE,
-        memmap[NUTSHELL_PLIC].size);
   }
+}
+
+static void nutshell_memory_create(MachineState *machine) {
+  NUTSHELLState *s = RISCV_NUTSHELL_MACHINE(machine);
+  MemoryRegion *system_memory = get_system_memory();
+  MemoryRegion *main_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *sram_mem = g_new(MemoryRegion, 1);
+  MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
 
   memory_region_init_ram(main_mem, NULL, "riscv_nutshell_board.dram",
                          machine->ram_size, &error_fatal);
@@ -204,26 +263,21 @@ static void nutshell_machine_init(MachineState *machine) {
   memory_region_add_subregion(system_memory, memmap[NUTSHELL_MROM].base,
                               mask_rom);
 
-  // add uart, qdev_get_gpio_in函数用来配置串口中断信号
-  serial_mm_init(system_memory, memmap[NUTSHELL_UART0].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART0_IRQ), 399193, serial_hd(0), DEVICE_LITTLE_ENDIAN);
-  serial_mm_init(system_memory, memmap[NUTSHELL_UART1].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART1_IRQ), 399193, serial_hd(1), DEVICE_LITTLE_ENDIAN);
-  serial_mm_init(system_memory, memmap[NUTSHELL_UART2].base, 0, qdev_get_gpio_in(DEVICE(mmio_plic), UART2_IRQ), 399193, serial_hd(2), DEVICE_LITTLE_ENDIAN);
-
-  riscv_aclint_swi_create(memmap[NUTSHELL_CLINT].base,
-        0, 1, false);
-  riscv_aclint_mtimer_create(memmap[NUTSHELL_CLINT].base +RISCV_ACLINT_SWI_SIZE,
-        RISCV_ACLINT_DEFAULT_MTIMER_SIZE, 0, 1,
-        RISCV_ACLINT_DEFAULT_MTIMECMP, RISCV_ACLINT_DEFAULT_MTIME,
-        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, false);
-
-  
-
-
-
-  nutshell_setup_rom_reset_vec(machine, &s->soc[0], memmap[NUTSHELL_MROM].base,
+  nutshell_setup_rom_reset_vec(machine, &s->soc[0], memmap[NUTSHELL_FLASH].base,
                                memmap[NUTSHELL_MROM].base,
                                memmap[NUTSHELL_MROM].size, 0, 0);
 }
+
+
+static void nutshell_machine_init(MachineState *machine) {
+  nutshell_cpu_create(machine);
+  nutshell_interrupt_controller_create(machine);
+  nutshell_memory_create(machine);
+  nutshell_flash_create(machine);
+  nutshell_serial_create(machine);
+}
+
+
 
 static void nutshell_machine_class_init(ObjectClass *oc, void *data) {
   MachineClass *mc = MACHINE_CLASS(oc);

@@ -1,12 +1,14 @@
 #ifndef HW_RISCV_NUTSHELL_H
 #define HW_RISCV_NUTSHELL_H
 
+#include "hw/block/flash.h"
 #include "hw/boards.h"
 #include "hw/cpu/cluster.h"
 #include "hw/riscv/riscv_hart.h"
 #include "hw/sysbus.h"
 #include "qemu/typedefs.h"
 #include "stdint.h"
+#include "hw/block/flash.h"
 
 #define NUTSHELL_CPUS_MAX 8
 #define NUTSHELL_CPUS_MIN 1
@@ -26,7 +28,8 @@ struct NUTSHELLState {
   /*< public >*/
   // CPUClusterState c_cluster;
   RISCVHartArrayState soc[NUTSHELL_SOCKETS_MAX];
-  DeviceState *plic[NUTSHELL_SOCKETS_MAX];
+  DeviceState *plic;
+  PFlashCFI01 *flash;
 };
 
 enum {
