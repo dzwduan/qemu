@@ -3,35 +3,35 @@
 
 #include "hw/boards.h"
 #include "hw/cpu/cluster.h"
-#include "stdint.h"
-#include "hw/sysbus.h"
 #include "hw/riscv/riscv_hart.h"
-
+#include "hw/sysbus.h"
+#include "stdint.h"
 
 #define NUTSHELL_CPUS_MAX 8
 #define NUTSHELL_CPUS_MIN 1
+#define NUTSHELL_SOCKETS_MAX 8
 
 // #define TYPE_RISCV_NUTSHELL_SOC "riscv.nutshell.soc"
 #define TYPE_RISCV_NUTSHELL_MACHINE MACHINE_TYPE_NAME("nutshell")
 typedef struct NUTSHELLState NUTSHELLState;
-#define RISCV_NUTSHELL_MACHINE(obj) \
-    OBJECT_CHECK(NUTSHELLState, (obj), TYPE_RISCV_NUTSHELL_MACHINE)
+#define RISCV_NUTSHELL_MACHINE(obj)                                            \
+  OBJECT_CHECK(NUTSHELLState, (obj), TYPE_RISCV_NUTSHELL_MACHINE)
 // DECLARE_INSTANCE_CHECKER(NUTSHELLState, RISCV_NUTSHELL_MACHINE,
 //                          TYPE_RISCV_NUTSHELL_MACHINE)
 
-struct NUTSHELLState{
-    /*< private >*/
-    MachineState parent;
+struct NUTSHELLState {
+  /*< private >*/
+  MachineState parent;
 
-    /*< public >*/
-    CPUClusterState c_cluster;
-    RISCVHartArrayState c_cpus;
+  /*< public >*/
+  // CPUClusterState c_cluster;
+  RISCVHartArrayState soc[NUTSHELL_SOCKETS_MAX];
 };
 
 enum {
   UART0_IRQ = 10,
   RTC_IRQ = 11,
-  VIRTIO_IRQ = 1,             /* 1 to 8 */
+  VIRTIO_IRQ = 1, /* 1 to 8 */
   VIRTIO_COUNT = 8,
   PCIE_IRQ = 0x20,            /* 32 to 35 */
   VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */

@@ -70,6 +70,7 @@ config NUTSHELL
     bool
     default y
     depends on RISCV64
+    select SERIAL
     select UNIMP
 
 config SIFIVE_E
